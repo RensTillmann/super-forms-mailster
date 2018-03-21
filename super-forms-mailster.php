@@ -11,7 +11,7 @@
  * Plugin Name: Super Forms - Mailster
  * Plugin URI:  http://codecanyon.net/item/super-forms-drag-drop-form-builder/13979866
  * Description: Register subscribers for Mailster with Super Forms
- * Version:     1.0.1
+ * Version:     1.0.2
  * Author:      feeling4design
  * Author URI:  http://codecanyon.net/user/feeling4design
 */
@@ -37,7 +37,7 @@ if(!class_exists('SUPER_Mailster')) :
          *
          *	@since		1.0.0
         */
-        public $version = '1.0.1';
+        public $version = '1.0.2';
 
 
         /**
@@ -227,33 +227,69 @@ if(!class_exists('SUPER_Mailster')) :
                 $settings = $atts['settings'];
                 if( (isset($settings['mailster_enabled'])) && ($settings['mailster_enabled']=='true') ) {
                     $data = $atts['post']['data'];
-                    $email = SUPER_Common::email_tags( $settings['mailster_email'], $data, $settings );
-                    $userdata = array();
-                    $fields = explode( "\n", $settings['mailster_fields'] );
-                    foreach( $fields as $k ) {
-                        $field = explode( "|", $k );
-                        // first check if a field with the name exists
-                        if( isset( $data[$field[1]]['value'] ) ) {
-                            $userdata[$field[0]] = $data[$field[1]]['value'];
-                        }else{
-                            // if no field exists, just save it as a string
-                            $string = SUPER_Common::email_tags( $field[1], $data, $settings );
-                            // check if string is serialized array
-                            $unserialize = @unserialize($string);
-                            if ($unserialize !== false) {
-                                $userdata[$field[0]] = $unserialize;
-                            }else{
-                                $userdata[$field[0]] = $string;
+                    $save_subscriber = 'yes';
+
+                    // @since 1.0.2 - check if we do not want to save subscriber conditionally
+                    if( !empty($settings['mailster_conditionally_save']) ) {
+                        $settings = $atts['settings'];
+                        $save_subscriber = 'no';
+                        if( !empty($settings['mailster_conditionally_save_check']) ) {
+                            $values = explode(',', $settings['mailster_conditionally_save_check']);
+                            // let's replace tags with values
+                            foreach( $values as $k => $v ) {
+                                $values[$k] = SUPER_Common::email_tags( $v, $data, $settings );
+                            }
+                            if(!isset($values[0])) $values[0] = '';
+                            if(!isset($values[1])) $values[1] = '=='; // is either == or !=   (== by default)
+                            if(!isset($values[2])) $values[2] = '';
+
+                            // if at least 1 of the 2 is not empty then apply the check otherwise skip it completely
+                            if( ($values[0]!='') || ($values[2]!='') ) {
+                                // Check if values match eachother
+                                if( ($values[1]=='==') && ($values[0]==$values[2]) ) {
+                                    // we do not want to save the contact entry
+                                    $save_subscriber = 'yes';
+                                }
+                                // Check if values do not match eachother
+                                if( ($values[1]=='!=') && ($values[0]!=$values[2]) ) {
+                                    // we do not want to save the contact entry
+                                    $save_subscriber = 'yes';
+                                }
+
                             }
                         }
                     }
-                    $lists = SUPER_Common::email_tags( $settings['mailster_lists'], $data, $settings );
-                    $lists = explode(",", $lists);
-                    $result = mailster_subscribe( $email, $userdata, $lists);
-                    if( !$result ) {
-                        if( isset($result->errors) ) {
-                            foreach( $result->errors as $k => $v ) {
-                                SUPER_Common::output_error( $error=true, $v[0] );
+
+                    // Only save when enabled and in case conditional saving matched
+                    if( $save_subscriber=='yes' ) {
+                        $email = SUPER_Common::email_tags( $settings['mailster_email'], $data, $settings );
+                        $userdata = array();
+                        $fields = explode( "\n", $settings['mailster_fields'] );
+                        foreach( $fields as $k ) {
+                            $field = explode( "|", $k );
+                            // first check if a field with the name exists
+                            if( isset( $data[$field[1]]['value'] ) ) {
+                                $userdata[$field[0]] = $data[$field[1]]['value'];
+                            }else{
+                                // if no field exists, just save it as a string
+                                $string = SUPER_Common::email_tags( $field[1], $data, $settings );
+                                // check if string is serialized array
+                                $unserialize = @unserialize($string);
+                                if ($unserialize !== false) {
+                                    $userdata[$field[0]] = $unserialize;
+                                }else{
+                                    $userdata[$field[0]] = $string;
+                                }
+                            }
+                        }
+                        $lists = SUPER_Common::email_tags( $settings['mailster_lists'], $data, $settings );
+                        $lists = explode(",", $lists);
+                        $result = mailster_subscribe( $email, $userdata, $lists);
+                        if( !$result ) {
+                            if( isset($result->errors) ) {
+                                foreach( $result->errors as $k => $v ) {
+                                    SUPER_Common::output_error( $error=true, $v[0] );
+                                }
                             }
                         }
                     }
@@ -282,6 +318,32 @@ if(!class_exists('SUPER_Mailster')) :
                             'true' => __( 'Add Mailster subscriber', 'super-forms' ),
                         )
                     ),
+
+                    // @since 1.0.2  - conditionally save mailster subscriber based on user input
+                    'mailster_conditionally_save' => array(
+                        'hidden_setting' => true,
+                        'default' => SUPER_Settings::get_value( 0, 'mailster_conditionally_save', $settings['settings'], '' ),
+                        'type' => 'checkbox',
+                        'filter'=>true,
+                        'values' => array(
+                            'true' => __( 'Conditionally save subscriber based on user data', 'super-forms' ),
+                        ),
+                        'parent' => 'mailster_enabled',
+                        'filter_value' => 'true',
+                    ),
+                    'mailster_conditionally_save_check' => array(
+                        'hidden_setting' => true,
+                        'type' => 'conditional_check',
+                        'name' => __( 'Only save subscriber when following condition is met', 'super-forms' ),
+                        'label' => __( 'Your are allowed to enter field {tags} to do the check', 'super-forms' ),
+                        'default' => SUPER_Settings::get_value( 0, 'mailster_conditionally_save_check', $settings['settings'], '' ),
+                        'placeholder' => "{fieldname},value",
+                        'filter'=>true,
+                        'parent' => 'mailster_conditionally_save',
+                        'filter_value' => 'true',
+                        'allow_empty'=>true,
+                    ),
+
                     'mailster_email' => array(
                         'name' => __( 'Subscriber email address', 'super-forms' ), 
                         'desc' => __( 'This will save the entered email by the user as the subsriber email address', 'super-forms' ), 
